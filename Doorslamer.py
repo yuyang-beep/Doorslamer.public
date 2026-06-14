@@ -237,7 +237,7 @@ else:
                     fetch_pages.clear()
                     send_wechat_msg(name)
                     st.session_state.submitted = True
-                    st.success("✅谢谢你的用心参与，给我一点时间准备，请等待我的"打扰"！")
+                    st.success('✅谢谢你的用心参与，给我一点时间准备，请等待我的"打扰"！')
                     st.balloons()
                     st.rerun()
                 else:

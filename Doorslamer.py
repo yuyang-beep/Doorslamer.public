@@ -121,12 +121,17 @@ def send_wechat_msg(name):
 def fetch_pages():
     url = f"https://api.notion.com/v1/databases/{_DATABASE_ID}/query"
     pages, payload = [], {}
-    while True:
-        resp = requests.post(url, headers=_NOTION_HEADERS, json=payload).json()
-        pages.extend(resp.get("results", []))
-        if not resp.get("has_more"):
-            break
-        payload = {"start_cursor": resp["next_cursor"]}
+    try:
+        while True:
+            resp = requests.post(url, headers=_NOTION_HEADERS, json=payload, timeout=10).json()
+            if "results" not in resp:
+                break
+            pages.extend(resp["results"])
+            if not resp.get("has_more"):
+                break
+            payload = {"start_cursor": resp["next_cursor"]}
+    except Exception:
+        pass
     return pages
 
 def pages_to_df(pages):
@@ -169,8 +174,11 @@ def add_page(row):
             "未来话题": rt(row["future_topic"]),
         }
     }
-    r = requests.post("https://api.notion.com/v1/pages", headers=_NOTION_HEADERS, json=payload)
-    return r.ok
+    try:
+        r = requests.post("https://api.notion.com/v1/pages", headers=_NOTION_HEADERS, json=payload, timeout=10)
+        return r.ok
+    except Exception:
+        return False
 
 # ========== 私密后台入口 ==========
 with st.expander("🔐 管理员后台查看数据"):

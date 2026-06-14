@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: doorslamer
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run Doorslamer.py --server.port $PORT --server.address 0.0.0.0
+    envVars:
+      - key: NOTION_TOKEN
+        sync: false
+      - key: NOTION_DATABASE_ID
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: SEND_KEY
+        sync: false

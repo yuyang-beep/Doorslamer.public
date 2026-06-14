@@ -1,8 +1,8 @@
 import streamlit as st
 import pandas as pd
-import os
 from datetime import datetime
 import requests
+import os
 
 # ---------- 页面配置 ----------
 st.set_page_config(page_title="Doorslamer", layout="centered")
@@ -69,7 +69,7 @@ st.markdown("""
 - 喜悦、低落、平静、焦虑、希望、迷茫
 - 以及一切你愿意分享的话题
 
-我们相信一种“长期主义”的关系：
+我们相信一种"长期主义"的关系：
 不需要频繁出现，但可以在不同阶段重新对话。
 
 与你开启一段聊天对我而言有点困难，所以想短暂地闯入你的社交区域，好奇你最近在忙什么，
@@ -91,52 +91,104 @@ Tips：
 
 st.markdown("---")
 
-# ========== 【后台密码】自己修改这里 ==========
-ADMIN_PASSWORD = "wyy512"
+# ========== 配置（从环境变量读取） ==========
+ADMIN_PASSWORD = os.environ["ADMIN_PASSWORD"]
+SEND_KEY = os.environ.get("SEND_KEY", "")
+
+_NOTION_HEADERS = {
+    "Authorization": f"Bearer {os.environ['NOTION_TOKEN']}",
+    "Content-Type": "application/json",
+    "Notion-Version": "2022-06-28"
+}
+_DATABASE_ID = os.environ["NOTION_DATABASE_ID"]
 
 # ========== 微信推送（可选） ==========
-SEND_KEY = "SCT340272TkNKeH36CrxB4rZy6qBjbP0xE"  # 不填就不推送
-
 def send_wechat_msg(name):
     if not SEND_KEY:
         return
     try:
-        url = f"https://sctapi.ftqq.com/{SEND_KEY}.send"
-        data = {
-            "title": "✅ 播客问卷新提交",
-            "desp": f"昵称：{name}\n时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}"
-        }
-        requests.post(url, data=data, timeout=5)
-    except:
+        requests.post(
+            f"https://sctapi.ftqq.com/{SEND_KEY}.send",
+            data={"title": "✅ 播客问卷新提交",
+                  "desp": f"昵称：{name}\n时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}"},
+            timeout=5
+        )
+    except Exception:
         pass
 
-# ========== 数据文件 ==========
-DATA_FILE = "../answers.csv"
+# ========== Notion 数据操作 ==========
+@st.cache_data(ttl=60)
+def fetch_pages():
+    url = f"https://api.notion.com/v1/databases/{_DATABASE_ID}/query"
+    pages, payload = [], {}
+    while True:
+        resp = requests.post(url, headers=_NOTION_HEADERS, json=payload).json()
+        pages.extend(resp.get("results", []))
+        if not resp.get("has_more"):
+            break
+        payload = {"start_cursor": resp["next_cursor"]}
+    return pages
 
-if not os.path.exists(DATA_FILE):
-    df = pd.DataFrame(columns=[
-        "time", "name", "mbti", "major", "concern","city",
-        "want_to_do", "want_to_go", "future_topic"
-    ])
-    df.to_csv(DATA_FILE, index=False, encoding="utf-8-sig")
+def pages_to_df(pages):
+    def text(prop):
+        items = prop.get("rich_text") or prop.get("title") or []
+        return items[0]["plain_text"] if items else ""
+    cols = ["time", "name", "mbti", "major", "concern", "city", "want_to_do", "want_to_go", "future_topic"]
+    if not pages:
+        return pd.DataFrame(columns=cols)
+    rows = []
+    for p in pages:
+        pr = p["properties"]
+        rows.append({
+            "time":         text(pr.get("时间", {})),
+            "name":         text(pr.get("昵称", {})),
+            "mbti":         text(pr.get("MBTI", {})),
+            "major":        text(pr.get("专业", {})),
+            "concern":      text(pr.get("困惑", {})),
+            "city":         text(pr.get("城市", {})),
+            "want_to_do":   text(pr.get("空闲", {})),
+            "want_to_go":   text(pr.get("想去", {})),
+            "future_topic": text(pr.get("未来话题", {})),
+        })
+    return pd.DataFrame(rows, columns=cols)
+
+def add_page(row):
+    def rt(v):
+        return {"rich_text": [{"text": {"content": str(v)}}]}
+    payload = {
+        "parent": {"database_id": _DATABASE_ID},
+        "properties": {
+            "昵称":    {"title": [{"text": {"content": row["name"]}}]},
+            "时间":    rt(row["time"]),
+            "MBTI":    rt(row["mbti"]),
+            "专业":    rt(row["major"]),
+            "困惑":    rt(row["concern"]),
+            "城市":    rt(row["city"]),
+            "空闲":    rt(row["want_to_do"]),
+            "想去":    rt(row["want_to_go"]),
+            "未来话题": rt(row["future_topic"]),
+        }
+    }
+    r = requests.post("https://api.notion.com/v1/pages", headers=_NOTION_HEADERS, json=payload)
+    return r.ok
 
 # ========== 私密后台入口 ==========
 with st.expander("🔐 管理员后台查看数据"):
     input_pwd = st.text_input("请输入管理员密码", type="password")
     if input_pwd == ADMIN_PASSWORD:
         st.success("✅ 身份验证成功，以下是完整数据")
-        df = pd.read_csv(DATA_FILE, encoding="utf-8-sig")
-        st.dataframe(df, use_container_width=True)
-
-        csv = df.to_csv(index=False, encoding="utf-8-sig")
-        st.download_button("💾 下载完整CSV", csv, "播客数据.csv", "text/csv")
+        df_admin = pages_to_df(fetch_pages())
+        st.dataframe(df_admin, use_container_width=True)
+        st.download_button("💾 下载完整CSV",
+                           df_admin.to_csv(index=False, encoding="utf-8-sig"),
+                           "播客数据.csv", "text/csv")
     elif input_pwd != "":
         st.error("❌ 密码错误")
 
 st.markdown("---")
 
 # ========== 读取数据 & 显示人数 ==========
-df = pd.read_csv(DATA_FILE, encoding="utf-8-sig")
+df = pages_to_df(fetch_pages())
 st.subheader("📊 在你犹豫的时候")
 st.markdown(f"**已有 {len(df)} 位朋友留下了自己的故事**")
 
@@ -171,23 +223,22 @@ else:
                 st.warning("该昵称已提交过，每人仅限一次")
             else:
                 new_row = {
-                    "time": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                    "name": name,
-                    "mbti": mbti.strip().upper(),
-                    "major": major,
-                    "concern": concern,
-                    "city": city,
-                    "want_to_do": want_to_do,
-                    "want_to_go": want_to_go,
-                    "future_topic": future_topic
+                    "time":         datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "name":         name,
+                    "mbti":         mbti.strip().upper(),
+                    "major":        major,
+                    "concern":      concern,
+                    "city":         city,
+                    "want_to_do":   want_to_do,
+                    "want_to_go":   want_to_go,
+                    "future_topic": future_topic,
                 }
-                new_df = pd.DataFrame([new_row])
-                updated = pd.concat([df, new_df], ignore_index=True)
-                updated.to_csv(DATA_FILE, index=False, encoding="utf-8-sig")
-
-                send_wechat_msg(name)
-
-                st.session_state.submitted = True
-                st.success("✅谢谢你的用心参与，给我一点时间准备，请等待我的“打扰”！")
-                st.balloons()
-                st.rerun()
+                if add_page(new_row):
+                    fetch_pages.clear()
+                    send_wechat_msg(name)
+                    st.session_state.submitted = True
+                    st.success("✅谢谢你的用心参与，给我一点时间准备，请等待我的"打扰"！")
+                    st.balloons()
+                    st.rerun()
+                else:
+                    st.error("提交失败，请稍后重试")

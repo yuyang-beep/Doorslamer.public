@@ -176,8 +176,11 @@ def add_page(row):
     }
     try:
         r = requests.post("https://api.notion.com/v1/pages", headers=_NOTION_HEADERS, json=payload, timeout=10)
+        if not r.ok:
+            st.error(f"Notion API 错误 {r.status_code}：{r.json().get('message', r.text)}")
         return r.ok
-    except Exception:
+    except Exception as e:
+        st.error(f"网络错误：{e}")
         return False
 
 # ========== 私密后台入口 ==========
